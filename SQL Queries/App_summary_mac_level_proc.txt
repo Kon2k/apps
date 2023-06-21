@@ -1,0 +1,43 @@
+CREATE OR REPLACE PROCEDURE `skyuk-uk-gpd-analytics-prod.KK_test.app_markers_mac_proc` (_current_date DATE,_days_duration INT64)
+BEGIN
+
+DELETE FROM `skyuk-uk-gpd-analytics-prod.KK_test.app_soip_groups_mac_level`
+WHERE date>=_current_date - _days_duration;
+INSERT INTO `skyuk-uk-gpd-analytics-prod.KK_test.app_soip_groups_mac_level`
+
+SELECT distinct  lower(replace(device.macAddress,':','')) as mac,
+device.model,osVersion as version, date(load_dt) as date,
+b.group_name,b.group_type,
+case when a.device.model='SKTL11AEI' AND  group_name IS NULL AND group_type IS NULL  then 'SKTL11AEI LIVE'
+
+--GLASS
+WHEN a.device.model='SKTL11AEI' AND group_name='llama' AND group_type='cherry_cug'  then 'CHERRY CUG' 
+WHEN a.device.model='SKTL11AEI' AND group_name='llama' AND group_type='cherry_trials'  then 'CHERRY TRIALS' 
+WHEN a.device.model='SKTL11AEI' AND b.group_name='llama' AND b.group_type='trials'  then 'SKTL11AEI STAFF TRIALS'
+WHEN a.device.model='SKTL11AEI' AND b.group_type='vip_journalists'  then 'SKTL11AEI JOURNALISTS'
+WHEN a.device.model='SKTL11AEI' AND b.group_name='llama' AND b.group_type='trials_other'  then 'SKTL11AEI STAFF TRIALS OTHER'
+WHEN a.device.model='SKTL11AEI' AND b.group_name='llama' AND b.group_type='cug' then 'SKTL11AEI CUG'
+
+--PUCK
+when a.device.model='SKXI11ADS' AND  group_name IS NULL AND group_type IS NULL  then 'SKXI11ADS LIVE' 
+
+WHEN a.device.model='SKXI11ADS' AND b.group_name='llamapuck' AND b.group_type='trials'  then 'SKXI11ADS STAFF TRIALS'
+WHEN a.device.model='SKXI11ADS' AND b.group_name='llamapuck' AND b.group_type='vip_journalists'  then 'SKXI11ADS JOURNALISTS'
+WHEN a.device.model='SKXI11ADS' AND b.group_name='llamapuck' AND b.group_type='trials_other'  then 'SKXI11ADS STAFF TRIALS OTHER'
+WHEN a.device.model='SKXI11ADS' AND b.group_name='llamapuck' AND b.group_type='cug'  then 'SKXI11ADS CUG'
+
+--CHILWORTH
+WHEN a.device.model='SKTL11AEI' AND b.group_type='chilworth'  AND group_name='llama' then 'SKTL11AEI CHILWORTH'
+WHEN a.device.model='SKXI11ADS' AND b.group_type='chilworth'  AND group_name='llamapuck' then 'SKXI11ADS CHILWORTH'
+
+else 'other' end as platform
+
+FROM `skyuk-uk-viewing-tds-prod.uk_arc_comcast_is.arc_comcast_appsummary` as a
+LEFT JOIN `skyuk-uk-gpd-analytics-prod.telemetry.user_groups_dim` as b
+on lower(replace(device.macAddress,':',''))=b.mac
+
+WHERE date(a.load_dt) >= _current_date - _days_duration 
+;
+END;
+
+CALL `skyuk-uk-gpd-analytics-prod.KK_test.app_markers_mac_proc` (CURRENT_DATE(),90);

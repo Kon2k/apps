@@ -1,0 +1,107 @@
+CREATE OR REPLACE TABLE `skyuk-uk-gpd-analytics-prod.KK_test.app_markers` AS 
+WITH data_foundation_markers AS (
+    SELECT
+        event_ts_utc AS device_timestamp,
+        REPLACE(LOWER(mac_address), ':', '') AS mac,
+        account_id AS accountid,
+        partner_id AS partnerid,
+        country_code AS country,
+        SPLIT(version, '_')[OFFSET(0)] AS device_type,
+        SPLIT(version, '_')[SAFE_OFFSET(1)] AS version,
+        searchresult AS markers,
+    FROM (
+        SELECT event_ts_utc, mac_address, account_id, partner_id, version, searchresult, country_code FROM `skyuk-uk-pa-pres-prod.uk_pub_rdk_discover_ic.rdk_rdkv`
+/*        UNION ALL
+        SELECT event_ts_utc, mac_address, account_id, partner_id, version, searchresult, 'it' AS country_code FROM `skyuk-it-pa-pres-prod.it_pub_rdkv_discover_ic.rdkv_rdkv`
+        UNION ALL
+        SELECT event_ts_utc, mac_address, account_id, partner_id, version, searchresult, 'de' AS country_code FROM `skyuk-de-pa-pres-prod.de_pub_rdkv_discover_ic.rdkv_rdkv` */
+    )
+    WHERE EXTRACT(DATE FROM event_ts_utc) > DATE_SUB(CURRENT_DATE(), INTERVAL 15 DAY)
+),
+
+-- Part 0.4: get OVP device_id
+ovp_deviceid as (
+    SELECT
+        mac,
+        TRIM(
+          MAX (
+              CASE
+                  WHEN partnerid IN ('sky-italia', 'sky-de')  THEN m.value
+                  ELSE NULL
+              END
+          ), "{}") AS device_id,
+    FROM data_foundation_markers
+    CROSS JOIN UNNEST(markers) AS m
+    WHERE m.key = "EUID_split"
+    GROUP BY mac
+),
+
+-- Part 0.5: cross join markers for a table with one marker per row
+marker_table AS (
+    SELECT
+        EXTRACT(DATE FROM device_timestamp) AS date,
+        mac,
+        CASE
+            WHEN partnerid IN ('sky-italia', 'sky-de')  THEN device_id
+            ELSE accountid
+        END AS viewerid,
+        partnerid,
+        device_type,
+        country,
+        version,
+        m.key AS code,
+        m.value,
+        CASE
+                WHEN partnerid = 'sky-uk' AND TIME(DATETIME(TIMESTAMP(device_timestamp),"GB")) BETWEEN TIME(18,00,00) AND TIME(22,59,59) THEN TRUE
+                ELSE FALSE
+        END AS primetime
+    FROM data_foundation_markers
+    CROSS JOIN UNNEST(markers) AS m
+    LEFT OUTER JOIN ovp_deviceid USING(mac)
+),
+
+appsummary as (
+select appName,lower(replace(device.macAddress,':','')) as mac,device.macAddress,date(load_dt) as date
+FROM `skyuk-uk-viewing-tds-prod.uk_arc_comcast_is.arc_comcast_appsummary`
+where date(load_dt)>=CURRENT_DATE()-15) 
+
+-----------------------------
+-----------------------------
+
+select count(*) as mac_seen,count(distinct a.mac) as unique_mac,version,a.date,device_type,code
+from marker_table as a
+inner join appsummary as b
+on a.mac=b.mac 
+and a.date=b.date
+where LOWER(code) like ('%app_info%')--,'app_info_nflaunch')
+AND a.date>=CURRENT_DATE()-15
+group by version,a.date,device_type,code
+having count(distinct a.mac)>100
+
+
+SELECT * --distinct marker_code
+FROM `skyuk-uk-gpd-analytics-prod.telemetry.rdk_daily_marker_by_version_stats` 
+WHERE lower(marker_code) like '%app_info%'
+LIMIT 1000
+
+
+----------------------------------
+----------------------------------
+select *
+from `skyuk-uk-gpd-analytics-prod.KK_test.pq_soip_markers_aggregated_V2`
+
+
+
+--------------
+---
+select avg(duration),date(load_dt),osVersion
+FROM `skyuk-uk-viewing-tds-prod.uk_arc_comcast_is.arc_comcast_appsummary` as a
+inner join `skyuk-uk-gpd-analytics-prod.pqihs.pq_soip_all_groups` as b
+ ON b.mac=lower(replace(a.device.macAddress,':',''))
+where 1=1
+--AND device.model='SKTL11AEI'
+and b.trial_group='SKTL11AEI LIVE'
+AND date(load_dt) between '2023-02-14' and '2023-02-23'
+and osVersion='QS013.503.00P'
+group by 2,3
+order by 2 asc

@@ -1,0 +1,21 @@
+CREATE OR REPLACE TABLE `skyuk-uk-gpd-analytics-prod.KK_test.app_soip_markers` 
+PARTITION by device_date as (
+SELECT *
+FROM `skyuk-uk-gpd-analytics-prod.telemetry.rdk_daily_marker_by_version_stats` 
+WHERE    marker_code IN ('APP_INFO_iPlayerLaunch',
+'NF_ERR_alreadylaunchfail',
+'SYST_INFO_FFVappLAUNCH',
+'APP_INFO_itvLaunch',
+'APP_INFO_BBCLaunch',
+'APP_INFO_YTkidsLaunch',
+'APP_INFO_btsportLaunch',
+'APP_INFO_AppleTVLaunch',
+'APP_INFO_storeTVLaunch',
+'APP_INFO_myskyLaunch',
+'APP_INFO_DisneyLaunch',
+'APP_INFO_NFLaunch',
+'APP_INFO_SpotifyLaunch',
+'APP_INFO_PrimeLaunch',
+'WPE_ERR_ProcessCrash')
+AND device_date >= CURRENT_DATE() - 90 
+);

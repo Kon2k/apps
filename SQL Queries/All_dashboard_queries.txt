@@ -1,0 +1,172 @@
+---------------------------------
+---- APP SUMMARY HOURLY AND DAILY
+
+---------
+-- Hourly
+--DROP TABLE `skyuk-uk-gpd-analytics-prod.KK_test.app_summary_hourly` ;
+CREATE OR REPLACE TABLE `skyuk-uk-gpd-analytics-prod.KK_test.app_summary_hourly` 
+PARTITION BY DATE AS (
+ with app_summary as (
+  SELECT 
+    distinct lower(replace(device.macAddress,':','')) as app_mac,
+    device.model,
+    appName,
+    TRIM(REPLACE(REPLACE(osVersion,'QS',''),'P','')) as version, 
+--    FORMAT_TIMESTAMP("%Y-%m-%d %H:00:00", load_dt) AS load_hour_utc,
+    FORMAT_TIMESTAMP("%Y-%m-%d %H:00:00",TIMESTAMP_MILLIS(header.timestamp)) as device_hour_utc,
+    duration,
+    CASE WHEN group_type IS NOT NULL THEN CONCAT(user_dim.group_name,'_',user_dim.group_type)
+      WHEN user_dim.group_name IS NOT NULL THEN CONCAT(user_dim.group_name, '_', 'other')
+      WHEN a.device.model = 'SKTL11AEI' THEN 'llama_live'
+      WHEN a.device.model = 'SKXI11ADS' THEN 'llamapuck_live'
+      ELSE 'unknown'
+      END AS device_type
+
+  FROM `skyuk-uk-viewing-tds-prod.uk_arc_comcast_is.arc_comcast_appsummary` as a
+  LEFT JOIN `skyuk-uk-gpd-analytics-prod.telemetry.user_groups_dim` as user_dim
+  on lower(replace(device.macAddress,':',''))=user_dim.mac
+)
+
+SELECT COUNT(DISTINCT app_mac) as unique_app_devices,
+avg(duration) as avg_duration,
+device_type,version,
+date(device_hour_utc) as date,
+extract(hour from cast(device_hour_utc as datetime)) as hour,
+appName
+  FROM app_summary
+  where date(device_hour_utc)>=current_date() - 90
+  group by hour,date,device_type,appName,version
+  --order by hour,date,device_type,appName,version
+  );
+
+-----------
+-- Daily --
+-- DROP TABLE `skyuk-uk-gpd-analytics-prod.KK_test.app_summary_daily`
+CREATE OR REPLACE TABLE `skyuk-uk-gpd-analytics-prod.KK_test.app_summary_daily` 
+PARTITION BY date AS(
+ with app_summary as (
+  SELECT 
+    distinct lower(replace(device.macAddress,':','')) as app_mac,
+    device.model,
+    appName,
+    TRIM(REPLACE(REPLACE(osVersion,'QS',''),'P','')) as version, 
+--    FORMAT_TIMESTAMP("%Y-%m-%d %H:00:00", load_dt) AS load_hour_utc,
+    date(FORMAT_TIMESTAMP("%Y-%m-%d %H:00:00",TIMESTAMP_MILLIS(header.timestamp))) as date,
+    duration,
+    CASE WHEN group_type IS NOT NULL THEN CONCAT(user_dim.group_name,'_',user_dim.group_type)
+      WHEN user_dim.group_name IS NOT NULL THEN CONCAT(user_dim.group_name, '_', 'other')
+      WHEN a.device.model = 'SKTL11AEI' THEN 'llama_live'
+      WHEN a.device.model = 'SKXI11ADS' THEN 'llamapuck_live'
+      ELSE 'unknown'
+      END AS device_type
+
+  FROM `skyuk-uk-viewing-tds-prod.uk_arc_comcast_is.arc_comcast_appsummary` as a
+  LEFT JOIN `skyuk-uk-gpd-analytics-prod.telemetry.user_groups_dim` as user_dim
+  on lower(replace(device.macAddress,':',''))=user_dim.mac
+
+),
+
+app_devices as (
+SELECT COUNT(DISTINCT app_mac) as unique_app_devices,
+avg(duration) as avg_duration,
+device_type,version,
+date,
+appName
+  FROM app_summary
+  where date>='2023-01-01'
+  group by date,device_type,appName,version
+  order by device_type,appName,version),
+
+unique_devices as (
+SELECT COUNT(DISTINCT app_mac) as unique_devices,
+--avg(duration) as avg_duration,
+device_type,version,
+date
+  FROM app_summary
+  where date>='2023-01-01'
+  group by date,device_type,version)
+
+SELECT device_type,version,date,a.unique_app_devices,b.unique_devices,a.appName,avg_duration
+FROM app_devices as a
+INNER JOIN unique_devices as b
+using (device_type,version,date)  
+);
+
+
+--------------
+---- Telemetry
+
+---------------
+--- Hourly
+-- DROP TABLE `skyuk-uk-gpd-analytics-prod.KK_test.telemetry_markers_hourly` 
+CREATE OR REPLACE TABLE `skyuk-uk-gpd-analytics-prod.KK_test.telemetry_markers_hourly` 
+PARTITION BY date AS (
+SELECT SUM(active_devices) as total_active_devices,sum(devices_affected) as total_devices_affected,
+SUM(active_devices) over (partition by device_type,date,hour) AS partition_active_devices, 
+count(marker_code) as count_marker_code,
+count(distinct marker_code) as countd_marker_code,
+hour,date,marker_code,device_type,version
+from 
+(
+    SELECT a.unique_devices as devices_affected, 
+    b.unique_devices as active_devices,
+    a.group_type as device_type,left(a.version,10) as version,
+    device_hour_utc as device_hour_utc,
+    date(device_hour_utc) as date,
+    extract(hour from cast(device_hour_utc as datetime)) as hour,
+    a.marker_code
+
+      FROM `skyuk-uk-gpd-analytics-prod.telemetry.rdk_hourly_marker_by_version_stats` AS a
+      INNER JOIN `skyuk-uk-gpd-analytics-prod.telemetry.rdk_hourly_actual_version_dist` as b
+      USING (group_type,version,device_hour_utc)
+
+    WHERE b.device_date_utc>=CURRENT_DATE()-90
+    and marker_code IN ('SYST_ERR_EPGCrash','SYS_ERR_epgcrash','APP_INFO_NFLaunch','APP_INFO_BBCLaunch','APP_INFO_YTLaunch',
+'APP_INFO_DisneyLaunch','APP_INFO_PrimeLaunch','APP_INFO_DiscPlusLaunch','APPCrash_split','SYST_ERR_AudioServerCrash','WPE_ERR_ProcessCrash','SYST_ERR_CrashSig5',
+'SYST_ERR_ASVoiceSearchCrash','SYST_ERR_QNAM_Crash','TEST_ERR_fogcrash','SYS_ERR_gstpluginscancrash','SYST_ERR_BT_Crash','SYST_ERR_DrmSystemCrash',
+'SYST_ERR_ble_wakeup_enab_crash','TEST_ERR_QTNetwork_crash','WIFI_ERR_DriverCrash','SYST_ERR_DSCrash','SYST_ERR_MedariteCrash','NF_ERR_Crash_TOSuspend',
+'SYST_ERR_webproc_crash','SYST_ERR_Parodus_Crash',
+'APP_ERR_Crash','WPE_ERR_rtrmfplayer_crash','SYST_ERR_CobaltCrash','SYS_ERR_AvcastCrash','SYS_INFO_TTS_Crash_det','SYST_ERR_XCALDevice_crash','SYST_ERR_ASPlayerCrash','APP_ERR_pelotoncrash','SYST_ERR_RTKAudioCrash','APP_ERR_Spotifycrash','SYST_ERR_FOGCrash','SYST_ERR_kernelcrashUpld','SYST_ERR_wpaSupplicantCrash','SCARD_ERR_StorageMgr_crash','SYST_ERR_HalProcessCrash','SYST_ERR_syslogng_crash','TEST_SkyBrowserCrash','CrashedProc_split','APP_ERROR_crashed_split','SYST_ERR_BTcrash','SYST_ERR_PoolCrash','SYS_INFO_ThreadCrash','NF_ERR_APPCrash','AAMP_ERR_GstPlayerSendHelperCrash','SYST_ERR_RemoteDebug_Crash','TEST_INFO_appservicedCrash',
+'RECVR_ERR_RTRMFCrash','FOG_ERR_crash','WIFIV_ERR_netsrvmgr_crash_doublefree','TEST_INFO_CivetwebsockCrash','SYST_INFO_CivetwebsockCrash','SYST_ERR_Tracecrash',
+'processCrash_split','SYST_ERR_QTNetwork_crash','NF_ERR_Crash_TOExit','TEST_INFO_ASBtCrash','SYS_INFO_SkyBrowserCrash','SYST_ERR_kworkeru9crash','WIFIV_ERR_DobbyServiceCrash',
+'INFO_ASBtCrash','WPE_ERR_WpeFW_crash','CTRLM_ERR_Bluecrash','TEST_INFO_DVBWPCrash','SYST_ERR_CrashPortalUpload_failed','SYST_ERR_JSSP_Crash',
+'SYST_INFO_CrashPrtlUpld','SYST_INFO_HangDetectorForceCrash','WIFIV_ERR_netsrvmgr_crash_free','TEST_INFO_NFcrashFile','SYS_ERR_BaseDlFragDlCrash','TEST_INFO_ThreadCrash','SYST_ERR_killedOOM','OOMkilledAPP_split','SYST_ERR_OOMinvoked')
+  --  group by a.group_type,a.version,a.marker_code,device_hour_utc,hour
+)
+group by hour,date,marker_code,device_type,version,active_devices
+--order by date,hour desc,marker_code,device_type
+);
+
+------------
+--- Daily
+CREATE OR REPLACE TABLE `skyuk-uk-gpd-analytics-prod.KK_test.telemetry_markers_daily` 
+PARTITION by date as (
+SELECT SUM(active_devices) as total_active_devices,sum(devices_affected) as total_devices_affected,
+date,marker_code,device_type,version,day_part
+FROM
+(
+  SELECT a.unique_devices as devices_affected, 
+    b.unique_devices as active_devices,
+    a.group_type as device_type,left(a.version,10) as version,
+    device_date as date,
+    a.marker_code,
+    day_part
+  FROM `skyuk-uk-gpd-analytics-prod.telemetry.rdk_daily_marker_by_version_stats`  AS a
+  INNER JOIN `skyuk-uk-gpd-analytics-prod.telemetry.rdk_daily_actual_version_dist` AS b
+    USING (group_type,version,device_date,day_part)
+  WHERE    marker_code IN('SYST_ERR_EPGCrash','SYS_ERR_epgcrash','APP_INFO_NFLaunch','APP_INFO_BBCLaunch','APP_INFO_YTLaunch',
+'APP_INFO_DisneyLaunch','APP_INFO_PrimeLaunch','APP_INFO_DiscPlusLaunch','APPCrash_split','SYST_ERR_AudioServerCrash','WPE_ERR_ProcessCrash','SYST_ERR_CrashSig5',
+'SYST_ERR_ASVoiceSearchCrash','SYST_ERR_QNAM_Crash','TEST_ERR_fogcrash','SYS_ERR_gstpluginscancrash','SYST_ERR_BT_Crash','SYST_ERR_DrmSystemCrash',
+'SYST_ERR_ble_wakeup_enab_crash','TEST_ERR_QTNetwork_crash','WIFI_ERR_DriverCrash','SYST_ERR_DSCrash','SYST_ERR_MedariteCrash','NF_ERR_Crash_TOSuspend',
+'SYST_ERR_webproc_crash','SYST_ERR_Parodus_Crash',
+'APP_ERR_Crash','WPE_ERR_rtrmfplayer_crash','SYST_ERR_CobaltCrash','SYS_ERR_AvcastCrash','SYS_INFO_TTS_Crash_det','SYST_ERR_XCALDevice_crash','SYST_ERR_ASPlayerCrash','APP_ERR_pelotoncrash','SYST_ERR_RTKAudioCrash','APP_ERR_Spotifycrash','SYST_ERR_FOGCrash','SYST_ERR_kernelcrashUpld','SYST_ERR_wpaSupplicantCrash','SCARD_ERR_StorageMgr_crash','SYST_ERR_HalProcessCrash','SYST_ERR_syslogng_crash','TEST_SkyBrowserCrash','CrashedProc_split','APP_ERROR_crashed_split','SYST_ERR_BTcrash','SYST_ERR_PoolCrash','SYS_INFO_ThreadCrash','NF_ERR_APPCrash','AAMP_ERR_GstPlayerSendHelperCrash','SYST_ERR_RemoteDebug_Crash','TEST_INFO_appservicedCrash',
+'RECVR_ERR_RTRMFCrash','FOG_ERR_crash','WIFIV_ERR_netsrvmgr_crash_doublefree','TEST_INFO_CivetwebsockCrash','SYST_INFO_CivetwebsockCrash','SYST_ERR_Tracecrash',
+'processCrash_split','SYST_ERR_QTNetwork_crash','NF_ERR_Crash_TOExit','TEST_INFO_ASBtCrash','SYS_INFO_SkyBrowserCrash','SYST_ERR_kworkeru9crash','WIFIV_ERR_DobbyServiceCrash',
+'INFO_ASBtCrash','WPE_ERR_WpeFW_crash','CTRLM_ERR_Bluecrash','TEST_INFO_DVBWPCrash','SYST_ERR_CrashPortalUpload_failed','SYST_ERR_JSSP_Crash',
+'SYST_INFO_CrashPrtlUpld','SYST_INFO_HangDetectorForceCrash','WIFIV_ERR_netsrvmgr_crash_free','TEST_INFO_NFcrashFile','SYS_ERR_BaseDlFragDlCrash','TEST_INFO_ThreadCrash')
+AND device_date >= CURRENT_DATE() - 90 
+)
+GROUP BY date,marker_code,device_type,version,day_part
+);
+
+----End ---

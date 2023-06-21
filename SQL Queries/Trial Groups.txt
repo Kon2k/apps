@@ -1,0 +1,31 @@
+--with appsummary as (
+select appName,lower(replace(device.macAddress,':','')) as mac,device.macAddress,date(load_dt) as date,duration,
+case when a.Device.Model='SKTL11AEI' AND  group_name IS NULL AND group_type IS NULL AND Device.Partner='sky-uk' then 'SKTL11AEI LIVE'
+
+WHEN a.Device.Model='SKTL11AEI' AND group_name='llama' AND group_type='cherry_cug' AND Device.Partner ='sky-uk' then 'CHERRY CUG' 
+WHEN a.Device.Model='SKTL11AEI' AND group_name='llama' AND group_type='cherry_trials' AND Device.Partner ='sky-uk' then 'CHERRY TRIALS' 
+
+WHEN a.Device.Model='SKTL11AEI' AND b.group_name='llama' AND b.group_type='trials' AND Device.Partner='sky-uk' then 'SKTL11AEI STAFF TRIALS'
+WHEN a.Device.Model='SKTL11AEI' AND b.group_type='vip_journalists' AND Device.Partner='sky-uk' then 'SKTL11AEI JOURNALISTS'
+WHEN a.Device.Model='SKTL11AEI' AND b.group_name='llama' AND b.group_type='trials_other' AND Device.Partner='sky-uk' then 'SKTL11AEI STAFF TRIALS OTHER'
+WHEN a.Device.Model='SKTL11AEI' AND b.group_name='llama' AND b.group_type='cug'AND Device.Partner='sky-uk' then 'SKTL11AEI CUG'
+WHEN a.Device.Model='SKTL11AEI' AND b.group_name='llama' AND b.group_type='combined_trials'AND Device.Partner='sky-uk' then 'SKTL11AEI COMBINED TRIALS'
+
+WHEN a.Device.Model='SKTL11AEI' AND group_name='llama' AND group_type='staffcustomers' AND Device.Partner ='sky-uk' then 'SKTL11AEI STAFF CUSTOMERS' 
+
+--PUCK
+when a.Device.Model='SKXI11ADS' AND  group_name IS NULL AND group_type IS NULL AND Device.Partner='sky-uk' then 'SKXI11ADS LIVE' 
+
+WHEN a.Device.Model='SKXI11ADS' AND b.group_name='llamapuck' AND b.group_type='trials' AND Device.Partner='sky-uk' then 'SKXI11ADS STAFF TRIALS'
+WHEN a.Device.Model='SKXI11ADS' AND b.group_name='llamapuck' AND b.group_type='vip_journalists' AND Device.Partner='sky-uk' then 'SKXI11ADS JOURNALISTS'
+WHEN a.Device.Model='SKXI11ADS' AND b.group_name='llamapuck' AND b.group_type='trials_other' AND Device.Partner='sky-uk' then 'SKXI11ADS STAFF TRIALS OTHER'
+WHEN a.Device.Model='SKXI11ADS' AND b.group_name='llamapuck' AND b.group_type='cug' AND Device.Partner='sky-uk' then 'SKXI11ADS CUG'
+
+WHEN a.Device.Model='SKXI11ADS' AND group_name='llamapuck' AND group_type='staffcustomers' AND Device.Partner ='sky-uk' then 'SKXI11ADS STAFF CUSTOMERS' else 'Other_group' end as trial_group
+
+FROM `skyuk-uk-viewing-tds-prod.uk_arc_comcast_is.arc_comcast_appsummary` as a
+left join  `skyuk-uk-gpd-analytics-prod.telemetry.user_groups_dim` as b 
+on b.mac=lower(replace(a.device.macAddress,':',''))
+where date(load_dt)>=CURRENT_DATE()-90 
+
+------------------------
